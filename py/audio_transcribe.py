@@ -184,8 +184,15 @@ class MOSSAdapter:
         return _load_moss_runtime(path, device)
 
     @staticmethod
-    def transcribe(handle: "AudioASRModel", samples: np.ndarray, duration: float, language: str) -> list[dict[str, Any]]:
-        return _moss_transcribe(handle, samples, duration, language)
+    def transcribe(
+        handle: "AudioASRModel",
+        samples: np.ndarray,
+        duration: float,
+        language: str,
+        custom_prompt: str = "",
+        hotwords: str = "",
+    ) -> list[dict[str, Any]]:
+        return _moss_transcribe(handle, samples, duration, language, custom_prompt=custom_prompt, hotwords=hotwords)
 
 
 @dataclass
@@ -288,18 +295,32 @@ def _parse_moss_segments(text: str, duration: float) -> list[dict[str, Any]]:
     return [{"start": 0.0, "end": max(duration, 0.1), "text": value}] if value else []
 
 
-def _moss_transcribe(handle: AudioASRModel, samples: np.ndarray, duration: float, language: str) -> list[dict[str, Any]]:
+def _build_moss_prompt(language: str, custom_prompt: str = "", hotwords: str = "") -> str:
+    default_prompt = (
+        "请将音频转写为文本，每一段需以起始时间戳和说话人编号（[S01]、[S02]、[S03]…）开头，正文为对应的语音内容，并在段末标注结束时间戳，以清晰标明该段语音范围。"
+    )
+    custom = str(custom_prompt or "").strip()
+    prompt = custom if custom else default_prompt
+    hotword_items = [item.strip() for item in str(hotwords or "").split(",") if item.strip()]
+    if hotword_items:
+        prompt += f"热词提示：{ ', '.join(hotword_items) }。"
+    if language and language != "auto":
+        prompt += f"主要语言是：{language}。"
+    return prompt
+
+
+def _moss_transcribe(
+    handle: AudioASRModel,
+    samples: np.ndarray,
+    duration: float,
+    language: str,
+    custom_prompt: str = "",
+    hotwords: str = "",
+) -> list[dict[str, Any]]:
     runtime = handle.runtime
     model = runtime["model"]
     processor = runtime["processor"]
-    prompt = (
-        "请将音频转写为文本，每一段自然句或完整对白都必须单独成段，不能把整段音频合并成一个段落。"
-        "每段需以起始时间戳和说话人编号（[S01]、[S02]、[S03]…）开头，正文为对应的语音内容，"
-        "并在段末标注结束时间戳，严格使用 [起始秒数][S01]台词内容[结束秒数] 格式。"
-        "只转写人类语言，不要描述音乐、环境声音或事件；最终结果会移除说话人编号。"
-    )
-    if language and language != "auto":
-        prompt += f"主要语言是{language}。"
+    prompt = _build_moss_prompt(language=language, custom_prompt=custom_prompt, hotwords=hotwords)
     messages = [
         {
             "role": "user",
@@ -375,9 +396,59 @@ class CSAudioTranscribe(io.ComfyNode):
             description="Downloads and runs the official MOSS model on a standard ComfyUI AUDIO input and returns SRT text.",
             inputs=[
                 io.Audio.Input("audio", tooltip="Standard ComfyUI AUDIO input."),
-                io.Combo.Input("language", options=["auto", "中文", "English"], default="auto", advanced=True),
-                io.Int.Input("max_chars_per_line", default=0, min=0, max=200, step=1, advanced=True),
-                io.Boolean.Input("auto_unload_model", default=True, advanced=True, tooltip="Unload MOSS weights after each transcription."),
+                io.Combo.Input(
+                    "language",
+                    options=[
+                        "auto",
+                        "中文",
+                        "English",
+                        "French",
+                        "German",
+                        "Italian",
+                        "Portuguese",
+                        "Spanish",
+                        "Japanese",
+                        "Korean",
+                        "Russian",
+                        "Thai",
+                        "Vietnamese",
+                        "Tagalog",
+                        "Urdu",
+                        "Turkish",
+                    ],
+                    default="auto",
+                    advanced=True,
+                ),
+                io.String.Input(
+                    "custom_prompt",
+                    default="",
+                    multiline=True,
+                    optional=True,
+                    advanced=True,
+                    tooltip="Custom replacement prompt for the default timestamped transcription instruction. Leave empty to use the built-in template; if you supply text here, it overrides the default instruction entirely. Example: 请将音频转写为文本，每一段需以起始时间戳和说话人编号（[S01]、[S02]、[S03]…）开头，正文为对应的语音内容，并在段末标注结束时间戳，以清晰标明该段语音范围。",
+                ),
+                io.String.Input(
+                    "hotwords",
+                    default="",
+                    multiline=False,
+                    optional=True,
+                    advanced=True,
+                    tooltip="Optional comma-separated hotwords, names, or terms to prefer during transcription; appended after the prompt. Example: OpenMOSS, Hugging Face, ComfyUI, Github",
+                ),
+                io.Int.Input(
+                    "max_chars_per_line",
+                    default=0,
+                    min=0,
+                    max=200,
+                    step=1,
+                    advanced=True,
+                ),
+                io.Boolean.Input(
+                    "auto_unload_model",
+                    default=True,
+                    advanced=True,
+                    tooltip="Unload MOSS weights after each transcription.",
+                ),
             ],
             outputs=[io.String.Output("srt", display_name="SRT")],
         )
@@ -387,6 +458,8 @@ class CSAudioTranscribe(io.ComfyNode):
         cls,
         audio: dict[str, Any],
         language: str = "auto",
+        custom_prompt: str = "",
+        hotwords: str = "",
         max_chars_per_line: int = 0,
         auto_unload_model: bool = True,
     ) -> io.NodeOutput:
@@ -413,7 +486,14 @@ class CSAudioTranscribe(io.ComfyNode):
         try:
             _LOGGER.info("[CS MOSS Audio Transcribe] stage 5/6: transcribing audio")
             with model.lock:
-                segments = MOSSAdapter.transcribe(model, samples, duration, language)
+                segments = MOSSAdapter.transcribe(
+                    model,
+                    samples,
+                    duration,
+                    language,
+                    custom_prompt=custom_prompt,
+                    hotwords=hotwords,
+                )
             _LOGGER.info("[CS MOSS Audio Transcribe] transcription complete: %d segments", len(segments))
             _LOGGER.info("[CS MOSS Audio Transcribe] stage 6/6: generating SRT output")
             result = _to_srt(segments, max_chars_per_line=int(max_chars_per_line))
