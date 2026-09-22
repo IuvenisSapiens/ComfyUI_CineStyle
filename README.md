@@ -709,24 +709,25 @@ Subtitle Timeline 前端界面由视频预览、时间线、字幕样式编辑�
 
 ### CS Compare Any
 
-对 `source_a` 和 `source_b` 两个输入进行比较。两个输入必须是相同的 ComfyUI 类型；执行后在节点界面中显示比较结果。
-`view_port_layout` 用于选择 `single`、`horizontal` 或 `vertical` 布局。
+对 `source_a` 和 `source_b` 两个输入进行比较。支持 Image、Mask、Video、文本、浮点、整数、布尔值、List、Dict 等类型的比较。
+`IMAGE`（包括 RGB、RGBA 等不同通道数图像）与 `MASK` 可以混合对比，其他数据类型需要保持类型一致。
+`view_port_layout` 用于选择 `single`、`horizontal` 或 `vertical` 布局。执行后在节点界面中显示比较结果。
 
 #### 使用流程
 
-1. 将两个相同类型的节点输出分别连接到 `source_a` 和 `source_b`。
+1. 将两个需要比较的节点输出分别连接到 `source_a` 和 `source_b`；RGB/RGBA 图像与 `MASK` 可以混合连接，其他类型比较则需要两个输入的类型保持一致。
 2. 选择 `view_port_layout`：`single` 只显示 A/B 对比视口，`horizontal` 显示横向排列的`source_a`和`source_a/b对比`双视口，`vertical` 显示纵向排列双视口。
 3. 执行工作流，节点会根据输入类型自动选择 media 或 text 模式。
 
 #### 节点输入
 
 - `source_a`：任意类型输入。
-- `source_b`：第二个任意类型输入，必须与 `source_a` 类型相同。
+- `source_b`：第二个任意类型输入。普通数据类型必须与 `source_a` 类型相同；RGB、RGBA 等 `IMAGE` 与 `MASK` 允许互相对比。
 - `view_port_layout`：视口布局，可选 `single`、`horizontal` 或 `vertical`，默认 `single`。
 
 #### Media 模式
 
-适用于 `VIDEO`、`IMAGE` 和 `MASK`。节点会根据两个输入的画幅比例设置视口；比例不一致时使用较宽的画幅比例，并在视口内部用黑色填充不足区域。
+适用于 `VIDEO`、`IMAGE` 和 `MASK`。其中 RGB、RGBA 等不同通道数的 `IMAGE` 与 `MASK` 可以互相对比。节点会根据两个输入的画幅比例设置视口；比例不一致时使用较宽的画幅比例，并在视口内部用黑色填充不足区域。
 
 ![CS Compare Any media 模式](images/CS_Compare_Any_media_mode.jpg)
 

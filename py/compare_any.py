@@ -160,27 +160,36 @@ def _adaptive_video_pixels(frame_count: int) -> int:
 
 
 def _resize_rgb_array(array: np.ndarray, max_pixels: int | None = _VIDEO_MAX_PREVIEW_PIXELS) -> np.ndarray:
+    """Resize an RGB/RGBA frame without discarding its alpha channel."""
     height, width = int(array.shape[0]), int(array.shape[1])
     target_width, target_height = _preview_dimensions(width, height, max_pixels)
     if (target_width, target_height) == (width, height):
         return np.ascontiguousarray(array, dtype=np.uint8)
-    image = Image.fromarray(np.asarray(array, dtype=np.uint8), mode="RGB")
+    channels = int(array.shape[-1]) if array.ndim >= 3 else 0
+    mode = {3: "RGB", 4: "RGBA"}.get(channels)
+    if mode is None:
+        raise ValueError(f"Image preview must have three or four channels, got {channels}.")
+    image = Image.fromarray(np.asarray(array, dtype=np.uint8), mode=mode)
     return np.ascontiguousarray(np.asarray(image.resize((target_width, target_height), Image.Resampling.LANCZOS), dtype=np.uint8))
 
 
 def _to_uint8(array: Any, max_pixels: int | None = _VIDEO_MAX_PREVIEW_PIXELS) -> np.ndarray:
-    """Convert ComfyUI tensor-like image data to contiguous RGB uint8 frames."""
+    """Convert arbitrary-channel image data to displayable RGB/RGBA frames."""
     if isinstance(array, torch.Tensor):
         value = array.detach()
         input_was_float = torch.is_floating_point(value)
         if value.ndim != 4:
             raise ValueError("IMAGE data must have shape [batch, height, width, channels].")
-        if value.shape[-1] == 1:
+        channels = int(value.shape[-1])
+        if channels <= 0:
+            raise ValueError("IMAGE data must have at least one channel.")
+        if channels == 1:
             value = value.expand(*value.shape[:-1], 3)
-        elif value.shape[-1] < 3:
-            raise ValueError("IMAGE data must have one, three, or four channels.")
+        elif channels == 2:
+            luminance = value[..., :1].expand(*value.shape[:-1], 3)
+            value = torch.cat((luminance, value[..., 1:2]), dim=-1)
         else:
-            value = value[..., :3]
+            value = value[..., :4] if channels == 4 else value[..., :3]
         target_width, target_height = _preview_dimensions(int(value.shape[2]), int(value.shape[1]), max_pixels)
         if (target_width, target_height) != (int(value.shape[2]), int(value.shape[1])):
             value = F.interpolate(
@@ -197,12 +206,15 @@ def _to_uint8(array: Any, max_pixels: int | None = _VIDEO_MAX_PREVIEW_PIXELS) ->
         raise ValueError("IMAGE data must have shape [batch, height, width, channels].")
     if value.shape[0] == 0 or value.shape[1] <= 0 or value.shape[2] <= 0:
         raise ValueError("IMAGE data contains no frames.")
-    if value.shape[-1] == 1:
+    channels = int(value.shape[-1])
+    if channels <= 0:
+        raise ValueError("IMAGE data must have at least one channel.")
+    if channels == 1:
         value = np.repeat(value, 3, axis=-1)
-    elif value.shape[-1] < 3:
-        raise ValueError("IMAGE data must have one, three, or four channels.")
+    elif channels == 2:
+        value = np.concatenate((np.repeat(value[..., :1], 3, axis=-1), value[..., 1:2]), axis=-1)
     else:
-        value = value[..., :3]
+        value = value[..., :4] if channels == 4 else value[..., :3]
     if np.issubdtype(value.dtype, np.floating) and (not isinstance(array, torch.Tensor) or input_was_float):
         value = np.clip(value, 0.0, 1.0) * 255.0
     else:
@@ -314,7 +326,12 @@ def _decode_video(value: Input.Video) -> _Media:
         if not isinstance(images, torch.Tensor):
             raise ValueError("VIDEO components contain no image tensor.")
         video_pixels = _adaptive_video_pixels(int(images.shape[0]))
-        frames = _to_uint8(images, max_pixels=video_pixels)
+        # Video previews are encoded as RGB; drop a component alpha channel
+        # before resizing so hidden RGB values cannot bleed into the preview.
+        video_images = images[..., :3] if images.shape[-1] >= 3 else images
+        frames = _to_uint8(video_images, max_pixels=video_pixels)
+        if frames.shape[-1] == 4:
+            frames = np.ascontiguousarray(frames[..., :3])
         return _Media("VIDEO", frames, _safe_fps(components.frame_rate), _normalise_audio(components.audio))
 
     source = value.get_stream_source()
@@ -369,7 +386,7 @@ def _classify(value: Any) -> str:
     if isinstance(value, Input.Video):
         return "VIDEO"
     if isinstance(value, torch.Tensor):
-        if value.ndim == 4 and int(value.shape[-1]) in {1, 3, 4}:
+        if value.ndim == 4 and int(value.shape[-1]) > 0:
             return "IMAGE"
         if value.ndim == 3:
             return "MASK"
@@ -391,6 +408,16 @@ def _classify(value: Any) -> str:
             return "UNSUPPORTED"
         return "DICT"
     return "UNSUPPORTED"
+
+
+def _kinds_compatible(kind_a: str, kind_b: str) -> bool:
+    """Return whether two values can share a comparison preview pipeline."""
+    if kind_a == kind_b:
+        return True
+    # IMAGE tensors and MASK tensors both become synchronized still-image
+    # frames for the preview, so their semantic type distinction should not
+    # prevent comparing an image against its mask.
+    return {kind_a, kind_b} == {"IMAGE", "MASK"}
 
 
 def _upstream_output_is_list(node_cls: type[io.ComfyNode], input_name: str) -> bool:
@@ -537,7 +564,12 @@ def _normalise_pair(media_a: _Media, media_b: _Media) -> tuple[np.ndarray, np.nd
     total_frames = max(1, int(math.ceil(max(media_a.duration, media_b.duration) * timeline_fps - 1e-9)))
 
     def fill(media: _Media) -> np.ndarray:
-        result = np.zeros((total_frames, media.height, media.width, 3), dtype=np.uint8)
+        # Keep each image's channel count independent. RGB and RGBA sources
+        # are both IMAGE values, but cannot be assigned into one fixed-width
+        # three-channel timeline buffer without dropping alpha or raising a
+        # broadcasting error.
+        channels = int(media.frames.shape[-1])
+        result = np.zeros((total_frames, media.height, media.width, channels), dtype=np.uint8)
         for index in range(total_frames):
             timestamp = index / timeline_fps
             if timestamp < media.duration - 1e-9:
@@ -578,7 +610,12 @@ def _png_response(array: np.ndarray) -> Any:
     from aiohttp import web
 
     buffer = py_io.BytesIO()
-    Image.fromarray(np.asarray(array[0], dtype=np.uint8), mode="RGB").save(buffer, format="PNG", optimize=False)
+    frame = np.asarray(array[0], dtype=np.uint8)
+    channels = int(frame.shape[-1]) if frame.ndim >= 3 else 0
+    mode = {3: "RGB", 4: "RGBA"}.get(channels)
+    if mode is None:
+        raise ValueError(f"Image preview must have three or four channels, got {channels}.")
+    Image.fromarray(frame, mode=mode).save(buffer, format="PNG", optimize=False)
     return web.Response(body=buffer.getvalue(), content_type="image/png", headers={"Cache-Control": "no-store"})
 
 
@@ -658,7 +695,7 @@ class CSCompareAny(io.ComfyNode):
         payload: dict[str, Any]
         _set_progress(node_id, 0, "Preparing comparison", {"type_a": kind_a, "type_b": kind_b, "view_port_layout": layout})
         try:
-            if kind_a != kind_b or kind_a == "UNSUPPORTED":
+            if not _kinds_compatible(kind_a, kind_b) or kind_a == "UNSUPPORTED":
                 detail = "source_a and source-b must be the same type"
                 if kind_a == kind_b == "UNSUPPORTED":
                     detail = "The connected values are not supported by CS Compare Any."

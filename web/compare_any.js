@@ -80,7 +80,7 @@ function addStyles() {
       .cs-compare-any-media-layout.cs-compare-any-layout-vertical .cs-compare-any-grid{grid-template-columns:minmax(0,var(--cs-compare-media-width,1fr));justify-items:center}
       .cs-compare-any-media-layout.cs-compare-any-layout-vertical .cs-compare-any-viewport{grid-column:1}
       .cs-compare-any-media-layout.cs-compare-any-layout-single .cs-compare-any-grid{grid-template-columns:minmax(0,var(--cs-compare-media-width,1fr));justify-items:center}
-      .cs-compare-any-viewport{position:relative;box-sizing:border-box;min-width:0;min-height:0;overflow:hidden;border:1px solid var(--border-color,#3c424d);border-radius:5px;background:#08090b}
+      .cs-compare-any-viewport{position:relative;box-sizing:border-box;min-width:0;min-height:0;overflow:hidden;border:1px solid var(--border-color,#3c424d);border-radius:5px;background:#808080}
       .cs-compare-any-viewport canvas{display:block;width:100%;height:100%;min-height:0}
       .cs-compare-any-source{grid-column:1;grid-row:1}
       .cs-compare-any-compare{grid-column:2;grid-row:1}
@@ -215,8 +215,9 @@ function drawMedia(state) {
     source.context.beginPath();
     source.context.rect(0, 0, source.width, source.height);
     source.context.clip();
-    source.context.fillStyle = "#08090b";
-    source.context.fillRect(0, 0, source.width, source.height);
+    // Keep the canvas transparent so the viewport's gray background remains
+    // visible behind RGBA media, matching CS Preview Any.
+    source.context.clearRect(0, 0, source.width, source.height);
     drawContained(source.context, sourceA, source.width, source.height, state.compareZoom, state.comparePanX, state.comparePanY);
     source.context.restore();
     const { context, width, height } = canvasCompare;
@@ -225,8 +226,7 @@ function drawMedia(state) {
     context.beginPath();
     context.rect(0, 0, width, height);
     context.clip();
-    context.fillStyle = "#08090b";
-    context.fillRect(0, 0, width, height);
+    context.clearRect(0, 0, width, height);
     drawContained(context, sourceB, width, height, state.compareZoom, state.comparePanX, state.comparePanY);
     const requestedPosition = Number(state.comparePosition);
     const position = clamp(Number.isFinite(requestedPosition) ? requestedPosition : 0, 0, 100) / 100;
@@ -234,8 +234,7 @@ function drawMedia(state) {
     context.beginPath();
     context.rect(0, 0, width * position, height);
     context.clip();
-    context.fillStyle = "#08090b";
-    context.fillRect(0, 0, width, height);
+    context.clearRect(0, 0, width * position, height);
     drawContained(context, sourceA, width, height, state.compareZoom, state.comparePanX, state.comparePanY);
     context.restore();
     context.restore();

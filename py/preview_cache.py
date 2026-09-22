@@ -199,20 +199,24 @@ class PreviewCacheStore:
         return f"{self.namespace}:{uuid.uuid4().hex}"
 
     @staticmethod
-    def _as_uint8(frames: Any) -> np.ndarray:
+    def _as_uint8(frames: Any, *, preserve_alpha: bool = False) -> np.ndarray:
         if isinstance(frames, torch.Tensor):
-            value = frames[..., :3].detach().to(device="cpu", dtype=torch.float32).clamp(0.0, 1.0).mul(255.0).round().to(torch.uint8).contiguous().numpy()
+            channels = int(frames.shape[-1]) if frames.ndim >= 1 else 0
+            keep_alpha = preserve_alpha and channels == 4
+            limit = 4 if keep_alpha else 3
+            value = frames[..., :limit].detach().to(device="cpu", dtype=torch.float32).clamp(0.0, 1.0).mul(255.0).round().to(torch.uint8).contiguous().numpy()
         else:
             value = np.asarray(frames)
             if value.ndim != 4:
                 raise ValueError("Preview frames must have shape [frames, height, width, channels].")
-            value = value[..., :3]
+            keep_alpha = preserve_alpha and int(value.shape[-1]) == 4
+            value = value[..., :4 if keep_alpha else 3]
             if np.issubdtype(value.dtype, np.floating):
                 value = np.clip(value, 0.0, 1.0) * 255.0
             value = np.asarray(np.rint(value), dtype=np.uint8)
         if value.ndim != 4 or value.shape[0] == 0 or value.shape[-1] < 3:
-            raise ValueError("Preview frames contain no usable RGB frames.")
-        return np.ascontiguousarray(value[..., :3])
+            raise ValueError("Preview frames contain no usable RGB/RGBA frames.")
+        return np.ascontiguousarray(value[..., :4 if preserve_alpha and value.shape[-1] == 4 else 3])
 
     @staticmethod
     def _safe_fps(fps: Any) -> float:
@@ -335,6 +339,8 @@ class PreviewCacheStore:
                 layout = {1: "mono", 2: "stereo", 6: "5.1"}.get(channels, "stereo")
                 audio_stream = container.add_stream("aac", rate=int(prepared_audio["sample_rate"]), layout=layout)
             for array in frames:
+                if array.shape[-1] == 4:
+                    array = array[..., :3]
                 if encoded_width != width or encoded_height != height:
                     array = np.pad(array, ((0, encoded_height - height), (0, encoded_width - width), (0, 0)), mode="edge")
                 video_frame = av.VideoFrame.from_ndarray(array, format="rgb24")
@@ -387,7 +393,7 @@ class PreviewCacheStore:
         base_key = self._base_key(node_id, variant)
         if not base_key:
             raise ValueError("Preview cache node_id is required.")
-        array = self._as_uint8(frames)
+        array = self._as_uint8(frames, preserve_alpha=not encode_video)
         safe_fps = self._safe_fps(fps)
         content_fingerprint = self._frame_fingerprint(array, safe_fps)
         audio_fingerprint = self._audio_fingerprint(audio)
