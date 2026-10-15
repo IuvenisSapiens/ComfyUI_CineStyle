@@ -11,7 +11,6 @@ const RESIZE_HOOK = Symbol("cinestyle-preview-any-resize-hook");
 const LAYOUT_FRAME = Symbol("cinestyle-preview-any-layout-frame");
 const TEXT_OUTER_SYNC = Symbol("cinestyle-preview-any-text-outer-sync");
 const OUTPUT_SIGNATURE = Symbol("cinestyle-preview-any-output-signature");
-const MEDIA_SIZE = Symbol("cinestyle-preview-any-media-size");
 const CANVAS_IMAGE_WIDGET = "$$canvas-image-preview";
 const TEXT_DEFAULT_HEIGHT = 150;
 const TEXT_MIN_HEIGHT = 90;
@@ -19,34 +18,26 @@ const TEXT_MAX_HEIGHT = Number.POSITIVE_INFINITY;
 const TEXT_WIDGET_MARGIN = 8;
 const NODE_MIN_WIDTH = 420;
 const NODE_MIN_HEIGHT = 240;
+// Core's PreviewImage preview widget keeps a fixed 220px floor instead of an
+// aspect-derived one, so the outer node height stays user-owned and the media
+// is scaled to fit and centred inside whatever viewport height is available.
+const MEDIA_MIN_VIEWPORT_HEIGHT = 220;
 // 58px waveform + 36px controls + 8px gap + 16px padding + 2px border.
 const AUDIO_VIEWPORT_HEIGHT = 120;
 const AUDIO_WIDGET_HEIGHT = AUDIO_VIEWPORT_HEIGHT + TEXT_WIDGET_MARGIN;
 
-function positiveNumber(value, fallback = 0) {
-    const number = Number(value);
-    return Number.isFinite(number) && number > 0 ? number : fallback;
-}
-
-function mediaAspect(node) {
-    const size = node?.[MEDIA_SIZE];
-    const width = positiveNumber(size?.width);
-    const height = positiveNumber(size?.height);
-    return width && height ? width / height : 0;
-}
-
-function mediaContentWidth(node) {
-    // ComfyUI's image/video preview widgets use the node content width for
-    // their aspect calculation; keep the same reference so the viewport and
-    // the encoded media do not accumulate an extra margin error.
-    return Math.max(1, Number(node?.size?.[0]) || NODE_MIN_WIDTH);
-}
-
-function mediaMinimumHeight(node, kind) {
+function mediaMinimumHeight(kind) {
     if (kind === "audio") return AUDIO_WIDGET_HEIGHT;
-    const aspect = mediaAspect(node);
-    if (!aspect) return kind === "image" || kind === "video" ? 220 : 0;
-    return Math.max(1, Math.round(mediaContentWidth(node) / aspect));
+    if (kind === "image" || kind === "video") return MEDIA_MIN_VIEWPORT_HEIGHT;
+    return 0;
+}
+
+function hasFlexibleMediaViewport(node) {
+    // Only an image/video viewport stretches with the node; the audio panel has
+    // a fixed height, so a text-only or audio node still lets the info panel
+    // absorb the remaining space.
+    const kind = node?.[CURRENT_KIND] || "none";
+    return (kind === "image" || kind === "video") && Boolean(mediaWidget(node, kind));
 }
 
 function outerResizeZone(event, element) {
@@ -99,6 +90,9 @@ function addTextViewport(node) {
         resizeHandle,
         widget: null,
         height: TEXT_DEFAULT_HEIGHT,
+        // Height the user set with the panel's own handle. An outer node resize
+        // may squeeze the rendered height down, but never raises it above this.
+        userHeight: TEXT_DEFAULT_HEIGHT,
         drag: null,
         locked: false,
     };
@@ -114,9 +108,13 @@ function addTextViewport(node) {
         serialize: false,
         canvasOnly: false,
         getMinHeight: () => TEXT_MIN_HEIGHT + TEXT_WIDGET_MARGIN,
-        // Text consumes the remaining space after the media widget. The CSS
-        // height is synchronized from computedHeight after every outer resize.
-        getMaxHeight: () => undefined,
+        // Keep the info panel at the height the user chose so growing the outer
+        // node grows the media viewport instead. The CSS height is still synced
+        // from computedHeight, which lets the panel shrink when the node is too
+        // short and grow back to userHeight once there is room again.
+        getMaxHeight: () => (hasFlexibleMediaViewport(node)
+            ? state.userHeight + TEXT_WIDGET_MARGIN
+            : undefined),
     };
 
     const finishResize = (event) => {
@@ -153,6 +151,7 @@ function setTextViewportHeight(node, state, requestedHeight) {
     if (nextHeight === state.height) return;
     const delta = nextHeight - state.height;
     state.height = nextHeight;
+    state.userHeight = nextHeight;
     state.container.style.setProperty("--cs-preview-any-text-height", `${nextHeight}px`);
 
     const currentWidth = Number(node.size?.[0]) || 420;
@@ -365,13 +364,12 @@ function syncMediaWidgetLayout(node, kind) {
     const widget = mediaWidget(node, kind);
     if (!widget) return false;
     if (kind === "image" || kind === "video") {
-        // Keep the source aspect ratio as the minimum media height used for
-        // the initial node expansion. Do not set maxHeight: the user-owned
-        // outer node height must be allowed to grow the viewport freely. Read
-        // the current node width on every layout pass so a width drag cannot
-        // briefly use a stale aspect-derived height.
+        // Mirror core's image preview widget: a fixed floor and no maxHeight.
+        // The user-owned outer node height then drives the viewport, and the
+        // media keeps its own aspect ratio inside it (letterboxed, centred)
+        // instead of forcing a minimum node height.
         widget.computeLayoutSize = () => ({
-            minHeight: mediaMinimumHeight(node, kind),
+            minHeight: mediaMinimumHeight(kind),
             minWidth: 1,
         });
     }
@@ -386,7 +384,7 @@ function minimumNodeHeight(node, kind) {
             ? Boolean(node[AUDIO_WIDGET]?.widget && !node[AUDIO_WIDGET].widget.hidden)
             : false;
     const pendingMedia = !mediaWidgetPresent && (kind === "image" || kind === "video")
-        ? mediaMinimumHeight(node, kind) + 4
+        ? mediaMinimumHeight(kind) + 4
         : 0;
     return Math.max(NODE_MIN_HEIGHT, computed + pendingMedia);
 }
@@ -561,9 +559,6 @@ function updateNode(node, output, disposeLegacyMedia = true) {
     }
     node[OUTPUT_SIGNATURE] = signature;
     node[CURRENT_KIND] = kind;
-    const mediaWidth = positiveNumber(payload.media_width);
-    const mediaHeight = positiveNumber(payload.media_height);
-    node[MEDIA_SIZE] = mediaWidth && mediaHeight ? { width: mediaWidth, height: mediaHeight } : null;
     const textState = node[TEXT_WIDGET];
     if (kindChanged && textState && isTextOnlyKind(kind)) {
         // Let the outer-node resize determine the text allocation after a

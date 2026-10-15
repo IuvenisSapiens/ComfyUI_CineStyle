@@ -35,6 +35,9 @@ _MAX_PREVIEW_FPS = 25.0
 _MAX_TEXT_CHARS = 200_000
 _MAX_JSON_DEPTH = 32
 _MAX_REPR_CHARS = 1_000
+# Preview URLs carry a per-entry uuid token, so their bytes never change and the
+# browser can reuse them instead of re-downloading a full-size frame.
+_PREVIEW_CACHE_CONTROL = "public, max-age=86400"
 _COMPARE_ROUTE_REGISTERED = False
 _COMPARE_STORE = None
 _COMPARE_PROGRESS: dict[str, dict[str, Any]] = {}
@@ -606,7 +609,7 @@ def _media_value(value: Any, kind: str) -> _Media:
     raise ValueError(f"Unsupported media type: {kind}")
 
 
-def _png_response(array: np.ndarray) -> Any:
+def _png_response(array: np.ndarray, etag: str = "") -> Any:
     from aiohttp import web
 
     buffer = py_io.BytesIO()
@@ -615,8 +618,13 @@ def _png_response(array: np.ndarray) -> Any:
     mode = {3: "RGB", 4: "RGBA"}.get(channels)
     if mode is None:
         raise ValueError(f"Image preview must have three or four channels, got {channels}.")
-    Image.fromarray(frame, mode=mode).save(buffer, format="PNG", optimize=False)
-    return web.Response(body=buffer.getvalue(), content_type="image/png", headers={"Cache-Control": "no-store"})
+    # Level 1 encodes a multi-megapixel frame about four times faster than PIL's
+    # default for a few percent more bytes, and the preview stays lossless.
+    Image.fromarray(frame, mode=mode).save(buffer, format="PNG", optimize=False, compress_level=1)
+    headers = {"Cache-Control": _PREVIEW_CACHE_CONTROL}
+    if etag:
+        headers["ETag"] = f'"{etag}"'
+    return web.Response(body=buffer.getvalue(), content_type="image/png", headers=headers)
 
 
 async def _compare_any_frame_route(request: Any) -> Any:
@@ -630,7 +638,15 @@ async def _compare_any_frame_route(request: Any) -> Any:
             return web.json_response({"error": "Compare Any preview cache not found."}, status=404)
         frames = np.load(str(entry["frames_path"]), mmap_mode="r", allow_pickle=False)
         index = max(0, min(index, int(frames.shape[0]) - 1))
-        return _png_response(np.array(frames[index : index + 1], copy=True))
+        # A token is a fresh uuid per cached preview, so token+frame always maps
+        # to the same bytes and the browser is allowed to keep the response.
+        etag = f"{token.replace(':', '-')}-{index}"
+        if request.headers.get("If-None-Match") == f'"{etag}"':
+            return web.Response(
+                status=304,
+                headers={"ETag": f'"{etag}"', "Cache-Control": _PREVIEW_CACHE_CONTROL},
+            )
+        return _png_response(np.array(frames[index : index + 1], copy=True), etag=etag)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return web.json_response({"error": str(exc)}, status=400)
 
@@ -653,7 +669,7 @@ async def _compare_any_video_route(request: Any) -> Any:
     path = Path(str((entry or {}).get("video_path") or (entry or {}).get("path") or "")) if entry else None
     if entry is None or path is None or not path.is_file():
         return web.json_response({"error": "Compare Any preview video not found."}, status=404)
-    return web.FileResponse(path=path, headers={"Content-Type": "video/mp4", "Cache-Control": "no-store"})
+    return web.FileResponse(path=path, headers={"Content-Type": "video/mp4", "Cache-Control": _PREVIEW_CACHE_CONTROL})
 
 
 class CSCompareAny(io.ComfyNode):
