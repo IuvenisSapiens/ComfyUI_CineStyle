@@ -198,7 +198,7 @@ function loaderPreviewPayload(source) {
         width: Number(source?.outputWidth ?? 0),
         height: Number(source?.outputHeight ?? 0),
         fps: Number(source?.targetFps ?? 0),
-        multiple: Number(source?.multiple ?? 32),
+        multiple: Number(source?.multiple ?? 8),
     };
 }
 

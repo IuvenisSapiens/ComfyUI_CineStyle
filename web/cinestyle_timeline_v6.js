@@ -8,7 +8,7 @@ const STYLE_ID = "cinestyle-timeline-style";
 const DEFAULT_TIMELINE_VALUES = Object.freeze({
     start_frame: 0,
     end_frame: -1,
-    multiple: 32,
+    multiple: 8,
     width: 0,
     height: 0,
     fps: 0,
@@ -482,7 +482,7 @@ function requestLoaderPreviewCache(node, filename, values) {
         width: Number(values?.width ?? 0),
         height: Number(values?.height ?? 0),
         fps: Number(values?.fps ?? 0),
-        multiple: Number(values?.multiple ?? 32),
+        multiple: Number(values?.multiple ?? DEFAULT_TIMELINE_VALUES.multiple),
         start_build: values?.startBuild !== false,
     };
     return api.fetchApi("/cinestyle/loader-preview-cache", {
@@ -548,7 +548,7 @@ function openTimeline(node) {
         width: Number(widget(node, "width")?.value ?? 0),
         height: Number(widget(node, "height")?.value ?? 0),
         fps: Number(widget(node, "fps")?.value ?? 0),
-        multiple: Number(widget(node, "multiple")?.value ?? 32),
+        multiple: Number(widget(node, "multiple")?.value ?? DEFAULT_TIMELINE_VALUES.multiple),
     };
     let info = null;
     let start = Math.max(0, currentValues.start);
@@ -742,7 +742,7 @@ function openTimeline(node) {
         const sourceLastFrame = Math.max(0, Number(info.frames || 1) - 1);
         start = clamp(start, 0, sourceLastFrame);
         end = end < 0 ? sourceLastFrame : clamp(end, start, sourceLastFrame);
-        multipleInput.value = currentValues.multiple > 0 ? currentValues.multiple : 32;
+        multipleInput.value = currentValues.multiple > 0 ? currentValues.multiple : DEFAULT_TIMELINE_VALUES.multiple;
         widthInput.value = currentValues.width > 0 ? currentValues.width : roundToMultiple(info.width, activeMultiple());
         heightInput.value = currentValues.height > 0 ? currentValues.height : roundToMultiple(info.height, activeMultiple());
         fpsInput.value = currentValues.fps || info.fps;

@@ -906,7 +906,7 @@ class CSSpatialStabilize(io.ComfyNode):
                 ),
                 io.Int.Input(
                     "multiple",
-                    default=32,
+                    default=8,
                     min=1,
                     max=1024,
                     step=1,
@@ -961,7 +961,7 @@ class CSSpatialStabilize(io.ComfyNode):
         cls,
         image: torch.Tensor,
         mask: torch.Tensor,
-        multiple: int = 32,
+        multiple: int = 8,
         crop_margin_percent: float = 30.0,
         average_frames: int = 8,
         mask_blur_sigma: float = 6.0,
