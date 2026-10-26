@@ -27,10 +27,6 @@ workflow JSON 和示例素材位于插件的 `workflows` 子目录。本文档�
 
 ## 更新说明
 
-* 调整 [CS Load Video](#cs-load-video) 节点，`multiple` 默认值由 `32` 改为 `8`，并修正切换视频文件后被前端重置为 `32` 的问题。
-* 调整 [CS Video Timeline Edit](#cs-video-timeline-edit) 节点，`multiple` 默认值由 `32` 改为 `8`，节点参数、Timeline 界面与复位按钮保持一致。
-* 调整 [CS Save Video](#cs-save-video) 节点，`FPS` 默认值由 `30.0` 改为 `25.0`，`H.264 bitrate` 默认值由 `8.0 Mbps` 改为 `25.0 Mbps`。
-* 调整 [CS Spatial Stabilize](#cs-spatial-stabilize) 节点，`multiple` 默认值由 `32` 改为 `8`。
 * 添加 [CS VideoMaMa](#cs-videomama) 节点，将逐帧二值 Mask 精修为时序 alpha matte。
 * 添加 [CS ProPainterX Inpaint](#cs-propainterx-inpaint) 节点，用 ProPainterX 配合 MemFOF 光流擦除视频中被 mask 标记的对象，按空闲显存自动分批并交叉淡化拼接，结果贴回源分辨率。
 * 添加 [CS Image Composite](#cs-image-composite) 节点，将layer 序列帧通过可视化 Timeline 变换编辑器合成到 background 序列帧，支持可选mask输入，支持多种图层混合模式。
