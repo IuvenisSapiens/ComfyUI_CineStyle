@@ -5,10 +5,15 @@ import { formatFrameCount } from "./cinestyle_timeline_range.js";
 
 const NODE_ID = "CS_Load_Video";
 const STYLE_ID = "cinestyle-timeline-style";
+// Preview viewport floor, matching the fixed 220px floor the core image
+// preview widget and CS Preview Any use. A fixed floor keeps the outer node
+// height owned by the user: the viewport stretches with the node box and the
+// video letterboxes inside it instead of dictating the node aspect ratio.
+const PREVIEW_MIN_VIEWPORT_HEIGHT = 220;
 const DEFAULT_TIMELINE_VALUES = Object.freeze({
     start_frame: 0,
     end_frame: -1,
-    multiple: 32,
+    multiple: 8,
     width: 0,
     height: 0,
     fps: 0,
@@ -142,12 +147,23 @@ function addVideoPreview(node, pathWidget) {
         getValue: () => element.value,
         setValue: (value) => { element.value = value; },
     });
+    // A minimum, not a fixed height: the widget takes every pixel the resized
+    // node box offers, the same layout contract CS Preview Any relies on.
+    // Deliberately no `computeSize`: ComfyUI's `_arrangeWidgets` gives a
+    // widget that defines `computeSize` a fixed height and only redistributes
+    // the remaining space to widgets that expose `computeLayoutSize`. Reporting
+    // a minimum (with no maximum) is what lets the viewport grow and shrink
+    // with the node box, exactly like the core image preview widget.
+    previewWidget.computeLayoutSize = () => (element.value?.hidden
+        ? { minHeight: 0, maxHeight: 0, minWidth: 0 }
+        : { minHeight: PREVIEW_MIN_VIEWPORT_HEIGHT, minWidth: 1 });
     const rangeIndicator = document.createElement("div");
     const rangeSelection = document.createElement("div");
     Object.assign(rangeIndicator.style, {
         position: "relative",
         width: "100%",
         height: "4px",
+        flex: "0 0 4px",
         margin: "0",
         padding: "0",
         background: "#626a73",
@@ -171,10 +187,26 @@ function addVideoPreview(node, pathWidget) {
     video.muted = true;
     video.playsInline = true;
     video.style.width = "100%";
+    video.style.height = "100%";
+    video.style.objectFit = "contain";
+    video.style.flex = "1 1 auto";
+    video.style.minHeight = "0";
     video.style.display = "block";
-    video.style.background = "#08090b";
+    // Match the core `.comfy-img-preview video` rule that CS Preview Any's
+    // video mode uses: contain-fit inside the viewport, no painted letterbox,
+    // so the node surface shows through instead of a fixed near-black bar.
+    video.style.background = "transparent";
     element.append(video);
     element.style.width = "100%";
+    element.style.height = "100%";
+    element.style.display = "flex";
+    element.style.flexDirection = "column";
+    // Core centres the media horizontally in the viewport (`place-content:
+    // flex-start center`); the contain-fit video does the vertical centring.
+    element.style.alignItems = "center";
+    element.style.justifyContent = "center";
+    element.style.minHeight = "0";
+    element.style.overflow = "hidden";
     element.addEventListener("dragover", (event) => {
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
@@ -230,17 +262,6 @@ function addVideoPreview(node, pathWidget) {
         };
         rangeWidget.__csRangeIndicatorBound = true;
     }
-    previewWidget.computeSize = (width) => {
-        if (video.videoWidth > 0 && video.videoHeight > 0 && !element.value.hidden) {
-            const aspectRatio = video.videoWidth / video.videoHeight;
-            // Match VHS's DOM preview sizing and reserve the widget's
-            // vertical padding so the final rows of the video stay visible.
-            const videoHeight = Math.max(0, (Math.max(160, node.size?.[0] || width) - 20) / aspectRatio + 10);
-            const height = 4 + videoHeight;
-            return [width, height];
-        }
-        return [width, rangeIndicator.hidden ? -4 : 4];
-    };
     const updateSource = (filename) => {
         const value = String(filename || "");
         element.value = { hidden: !value, filename: value };
@@ -259,17 +280,17 @@ function addVideoPreview(node, pathWidget) {
     };
     const fitPreviewHeight = () => {
         const width = Math.max(160, node.size?.[0] || 360);
-        // Compute the complete node height so the preview does not clip the
-        // widgets above it (LiteGraph's computeSize includes all widgets).
+        // Only raise the node when the widgets no longer fit. Never grow it to
+        // the source aspect ratio, which is what locked the node to it.
         const computed = node.computeSize?.([width, node.size?.[1] || 0]);
-        const totalHeight = Number(computed?.[1]);
-        if (Number.isFinite(totalHeight) && totalHeight > 0) {
-            node.setSize?.([width, totalHeight]);
+        const minimumHeight = Number(computed?.[1]);
+        const currentHeight = Number(node.size?.[1]) || 0;
+        if (Number.isFinite(minimumHeight) && minimumHeight > 0 && currentHeight < minimumHeight) {
+            node.setSize?.([width, minimumHeight]);
+            node.graph?.setDirtyCanvas(true, true);
         }
-        node.graph?.setDirtyCanvas(true, true);
     };
     video.addEventListener("loadedmetadata", () => {
-        previewWidget.aspectRatio = video.videoWidth / video.videoHeight;
         fitPreviewHeight();
         updateRangeIndicator();
     });
@@ -482,7 +503,7 @@ function requestLoaderPreviewCache(node, filename, values) {
         width: Number(values?.width ?? 0),
         height: Number(values?.height ?? 0),
         fps: Number(values?.fps ?? 0),
-        multiple: Number(values?.multiple ?? 32),
+        multiple: Number(values?.multiple ?? DEFAULT_TIMELINE_VALUES.multiple),
         start_build: values?.startBuild !== false,
     };
     return api.fetchApi("/cinestyle/loader-preview-cache", {
@@ -548,7 +569,7 @@ function openTimeline(node) {
         width: Number(widget(node, "width")?.value ?? 0),
         height: Number(widget(node, "height")?.value ?? 0),
         fps: Number(widget(node, "fps")?.value ?? 0),
-        multiple: Number(widget(node, "multiple")?.value ?? 32),
+        multiple: Number(widget(node, "multiple")?.value ?? DEFAULT_TIMELINE_VALUES.multiple),
     };
     let info = null;
     let start = Math.max(0, currentValues.start);
@@ -742,7 +763,7 @@ function openTimeline(node) {
         const sourceLastFrame = Math.max(0, Number(info.frames || 1) - 1);
         start = clamp(start, 0, sourceLastFrame);
         end = end < 0 ? sourceLastFrame : clamp(end, start, sourceLastFrame);
-        multipleInput.value = currentValues.multiple > 0 ? currentValues.multiple : 32;
+        multipleInput.value = currentValues.multiple > 0 ? currentValues.multiple : DEFAULT_TIMELINE_VALUES.multiple;
         widthInput.value = currentValues.width > 0 ? currentValues.width : roundToMultiple(info.width, activeMultiple());
         heightInput.value = currentValues.height > 0 ? currentValues.height : roundToMultiple(info.height, activeMultiple());
         fpsInput.value = currentValues.fps || info.fps;

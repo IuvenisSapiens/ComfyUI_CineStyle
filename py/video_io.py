@@ -507,7 +507,7 @@ class CSSaveVideo(io.ComfyNode):
                 io.Float.Input(
                     "fps",
                     display_name="FPS",
-                    default=30.0,
+                    default=25.0,
                     min=1.0,
                     max=240.0,
                     step=0.01,
@@ -533,7 +533,7 @@ class CSSaveVideo(io.ComfyNode):
                                 io.Float.Input(
                                     "bitrate",
                                     display_name="H.264 bitrate (Mbps)",
-                                    default=8.0,
+                                    default=25.0,
                                     min=1.0,
                                     max=160.0,
                                     step=0.1,
@@ -564,7 +564,7 @@ class CSSaveVideo(io.ComfyNode):
         image: torch.Tensor | None = None,
         mask: torch.Tensor | None = None,
         audio: dict[str, Any] | None = None,
-        fps: float = 30.0,
+        fps: float = 25.0,
         filename_prefix: str = "video/ComfyUI",
         format: str = "auto",
         codec: io.DynamicCombo.Type = "h264",
@@ -573,7 +573,7 @@ class CSSaveVideo(io.ComfyNode):
         if video is None:
             video = _video_from_tensor_inputs(image, mask, audio, fps)
         codec_name = codec.get("codec", "h264") if isinstance(codec, dict) else str(codec or "h264")
-        bitrate_mbps = float(codec.get("bitrate", 8.0)) if isinstance(codec, dict) else 8.0
+        bitrate_mbps = float(codec.get("bitrate", 25.0)) if isinstance(codec, dict) else 25.0
         width, height = video.get_dimensions()
         full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
             filename_prefix,

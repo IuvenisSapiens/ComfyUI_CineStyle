@@ -70,6 +70,7 @@ _ANSI_GREEN = "\033[32m"
 _ANSI_RESET = "\033[0m"
 _SCHEMA_MAX_DIMENSION = 1_048_576
 _SCHEMA_MAX_MULTIPLE = 65_536
+_DEFAULT_MULTIPLE = 8
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif", ".avif"}
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mpg", ".mpeg", ".wmv", ".flv"}
@@ -752,14 +753,14 @@ def normalise_timeline(value: Any, source_frames: int, fps: float, *, default_if
         output_height_raw = _first(raw, "height", "output_height", "outputHeight", default=0)
     output_multiple_raw = _first(raw_output, "multiple", "output_multiple", "outputMultiple", default=None)
     if output_multiple_raw is None or _safe_int(output_multiple_raw, 0, 0) <= 0:
-        output_multiple_raw = _first(raw, "multiple", "output_multiple", "outputMultiple", default=32)
+        output_multiple_raw = _first(raw, "multiple", "output_multiple", "outputMultiple", default=_DEFAULT_MULTIPLE)
     output_fill_raw = _first(raw_output, "fill_color", "fillColor", "output_fill_color", "outputFillColor", default=None)
     if output_fill_raw is None or not str(output_fill_raw).strip():
         output_fill_raw = _first(raw, "fill_color", "fillColor", "output_fill_color", "outputFillColor", default="#000000")
     output = {
         "width": -1 if _safe_int(output_width_raw, -1) <= 0 else _safe_int(output_width_raw, -1, 1),
         "height": -1 if _safe_int(output_height_raw, -1) <= 0 else _safe_int(output_height_raw, -1, 1),
-        "multiple": max(1, _safe_int(output_multiple_raw, 32, 1)),
+        "multiple": max(1, _safe_int(output_multiple_raw, _DEFAULT_MULTIPLE, 1)),
         "fit_mode": output_fit,
         "fill_color": _normalise_hex(output_fill_raw),
     }
@@ -2211,13 +2212,13 @@ def _resolve_output_options(payload: Mapping[str, Any], output_config: Mapping[s
     saved = output_config if isinstance(output_config, Mapping) else {}
     raw_width = _first(payload, "width", "output_width", "outputWidth", default=-1)
     raw_height = _first(payload, "height", "output_height", "outputHeight", default=-1)
-    raw_multiple = _first(payload, "multiple", "output_multiple", "outputMultiple", default=32)
+    raw_multiple = _first(payload, "multiple", "output_multiple", "outputMultiple", default=_DEFAULT_MULTIPLE)
     raw_fit = str(_first(payload, "fit_mode", "fitMode", "output_fit_mode", "outputFitMode", default="letterbox") or "letterbox").strip().lower()
     raw_color = _first(payload, "fill_color", "fillColor", "output_fill_color", "outputFillColor", default="#000000")
     width = raw_width if _safe_int(raw_width, -1) > 0 else _first(saved, "width", "output_width", "outputWidth", default=raw_width)
     height = raw_height if _safe_int(raw_height, -1) > 0 else _first(saved, "height", "output_height", "outputHeight", default=raw_height)
     saved_multiple = _first(saved, "multiple", "output_multiple", "outputMultiple", default=None)
-    multiple = raw_multiple if _safe_int(raw_multiple, 32, 1) != 32 or not saved_multiple else saved_multiple
+    multiple = raw_multiple if _safe_int(raw_multiple, _DEFAULT_MULTIPLE, 1) != _DEFAULT_MULTIPLE or not saved_multiple else saved_multiple
     saved_fit = _first(saved, "fit_mode", "fitMode", "output_fit_mode", "outputFitMode", default=None)
     saved_color = _first(saved, "fill_color", "fillColor", "output_fill_color", "outputFillColor", default=None)
     fit_mode = saved_fit if raw_fit == "letterbox" and saved_fit else raw_fit
@@ -2441,7 +2442,7 @@ def _proxy_request_key(payload: Mapping[str, Any]) -> str:
         "timeline": descriptor,
         "width": _safe_int(payload.get("width", 0), 0, 0),
         "height": _safe_int(payload.get("height", 0), 0, 0),
-        "multiple": _safe_int(payload.get("multiple", 32), 32, 1),
+        "multiple": _safe_int(payload.get("multiple", _DEFAULT_MULTIPLE), _DEFAULT_MULTIPLE, 1),
         "fit_mode": str(payload.get("fit_mode", "letterbox")),
         "fill_color": _normalise_hex(payload.get("fill_color", "#000000")),
     }
@@ -2799,7 +2800,7 @@ class CSVideoTimelineEdit(io.ComfyNode):
                 ),
                 io.Int.Input("width", default=-1, min=-1, max=_SCHEMA_MAX_DIMENSION, step=1, advanced=True, tooltip="Output canvas width; -1 uses the input source width. Positive values are rounded up to the selected multiple."),
                 io.Int.Input("height", default=-1, min=-1, max=_SCHEMA_MAX_DIMENSION, step=1, advanced=True, tooltip="Output canvas height; -1 uses the input source height. Positive values are rounded up to the selected multiple."),
-                io.Int.Input("multiple", default=32, min=1, max=_SCHEMA_MAX_MULTIPLE, step=1, advanced=True, tooltip="Round each output side up to this integer multiple."),
+                io.Int.Input("multiple", default=_DEFAULT_MULTIPLE, min=1, max=_SCHEMA_MAX_MULTIPLE, step=1, advanced=True, tooltip="Round each output side up to this integer multiple."),
                 io.Combo.Input("fit_mode", options=["letterbox", "crop", "fill"], default="letterbox", advanced=True, tooltip="Fit each clip to the output canvas."),
                 io.String.Input("fill_color", default="#000000", advanced=True, tooltip="Hex color for letterbox bars and empty timeline regions."),
                 io.Int.Input("in_frame", display_name="in_frame", default=0, min=0, max=10000000, step=1, advanced=True, tooltip="Timeline In frame; also trims final output."),
@@ -2827,7 +2828,7 @@ class CSVideoTimelineEdit(io.ComfyNode):
         timeline_json: Any = "",
         width: int = -1,
         height: int = -1,
-        multiple: int = 32,
+        multiple: int = _DEFAULT_MULTIPLE,
         fit_mode: str = "letterbox",
         fill_color: str = "#000000",
         in_frame: int = 0,
@@ -2884,7 +2885,7 @@ class CSVideoTimelineEdit(io.ComfyNode):
         fit_mode = str(fit_mode or "letterbox").strip().lower()
         if fit_mode not in {"letterbox", "crop", "fill"}:
             fit_mode = "letterbox"
-        multiple = max(1, _safe_int(multiple, 32, 1))
+        multiple = max(1, _safe_int(multiple, _DEFAULT_MULTIPLE, 1))
         width = -1 if _safe_int(width, -1) <= 0 else _safe_int(width, -1, 1)
         height = -1 if _safe_int(height, -1) <= 0 else _safe_int(height, -1, 1)
         output_width, output_height = _fit_dimensions(source_width, source_height, width, height, multiple)
@@ -3014,14 +3015,14 @@ class CSVideoTimelineEdit(io.ComfyNode):
         # widget values remain authoritative.
         effective_width = width if _safe_int(width, 0, 0) > 0 else saved_output.get("width", width)
         effective_height = height if _safe_int(height, 0, 0) > 0 else saved_output.get("height", height)
-        effective_multiple = multiple if _safe_int(multiple, 32, 1) != 32 or not saved_output.get("multiple") else saved_output.get("multiple", multiple)
+        effective_multiple = multiple if _safe_int(multiple, _DEFAULT_MULTIPLE, 1) != _DEFAULT_MULTIPLE or not saved_output.get("multiple") else saved_output.get("multiple", multiple)
         effective_fit_mode = fit_mode
         if str(fit_mode or "letterbox").strip().lower() == "letterbox" and saved_output.get("fit_mode"):
             effective_fit_mode = saved_output.get("fit_mode")
         effective_fill_color = fill_color
         if _normalise_hex(fill_color) == "#000000" and saved_output.get("fill_color"):
             effective_fill_color = saved_output.get("fill_color")
-        effective_multiple = max(1, _safe_int(effective_multiple, 32, 1))
+        effective_multiple = max(1, _safe_int(effective_multiple, _DEFAULT_MULTIPLE, 1))
         effective_fit_mode = str(effective_fit_mode or "letterbox").strip().lower()
         if effective_fit_mode not in {"letterbox", "crop", "fill"}:
             effective_fit_mode = "letterbox"

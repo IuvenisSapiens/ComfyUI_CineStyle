@@ -35,6 +35,8 @@ _MAX_CACHE_PIXELS = 1_000_000
 _MIN_BITRATE = 3_000_000
 _AUDIO_RATE = 16_000
 _MAX_ENTRIES = 32
+# Fallback rounding multiple, kept in sync with the CS Load Video node default.
+DEFAULT_MULTIPLE = 8
 _MAX_BYTES = 4 * 1024**3
 _BUILD_SLOTS = threading.BoundedSemaphore(2)
 _TOKEN_PREFIX = "loader_preview:"
@@ -109,12 +111,12 @@ def aspect_locked_dimensions(
     source_height: Any,
     requested_width: Any = 0,
     requested_height: Any = 0,
-    multiple: Any = 32,
+    multiple: Any = DEFAULT_MULTIPLE,
 ) -> tuple[int, int]:
     source_width = max(1, _safe_int(source_width, 1))
     source_height = max(1, _safe_int(source_height, 1))
     aspect = source_width / float(source_height)
-    multiple = max(1, _safe_int(multiple, 32))
+    multiple = max(1, _safe_int(multiple, DEFAULT_MULTIPLE))
     requested_width = _safe_int(requested_width, 0)
     requested_height = _safe_int(requested_height, 0)
     if requested_width > 0:
@@ -253,7 +255,7 @@ def _normalise_request(payload: dict[str, Any]) -> dict[str, Any]:
         "cache_height": cache_height,
         "encoded_width": encoded_width,
         "encoded_height": encoded_height,
-        "multiple": max(1, _safe_int(payload.get("multiple"), 32)),
+        "multiple": max(1, _safe_int(payload.get("multiple"), DEFAULT_MULTIPLE)),
         "has_audio": bool(probe.get("has_audio")),
         "audio_rate": _AUDIO_RATE if probe.get("has_audio") else 0,
         "signature": signature,
