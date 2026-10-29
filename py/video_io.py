@@ -8,6 +8,7 @@ import json
 import logging
 import time
 import sys
+import inspect
 from fractions import Fraction
 from typing import Any
 
@@ -22,6 +23,7 @@ from comfy_api.latest import ComfyExtension, Input, InputImpl, Types, io, ui
 
 _ROUTE_REGISTERED = False
 _LOGGER = logging.getLogger("CineStyleVideoTimeline")
+_OPTIONAL_KWARGS_CACHE: dict[str, frozenset[str]] = {}
 
 
 def _video_files() -> list[str]:
@@ -339,12 +341,15 @@ class CSLoadVideo(io.ComfyNode):
         }
         video_images = selected[..., :3] if selected.shape[-1] == 4 else selected
         output_frame_rate = Fraction(target_fps).limit_denominator(1000)
+        components_kwargs = _optional_kwargs(
+            Types.VideoComponents, ("metadata",), metadata=info
+        )
         output_video = InputImpl.VideoFromComponents(
             Types.VideoComponents(
                 images=video_images,
                 audio=audio,
                 frame_rate=output_frame_rate,
-                metadata=info,
+                **components_kwargs,
             )
         )
         # ComfyUI's VideoFromComponents currently drops ``metadata`` when a
@@ -451,6 +456,31 @@ def _write_h264(
                 container.mux(packet)
 
 
+def _optional_kwargs(target: Any, supported: tuple[str, ...], **kwargs: Any) -> dict[str, Any]:
+    """Drop keyword arguments that this ComfyUI build does not accept.
+
+    Recent ComfyUI builds take new optional video arguments such as ``color_space``,
+    while older runtimes (including many portable snapshots) raise ``TypeError`` for
+    them. Each target's accepted names are probed once per process and reused, so a
+    node keeps working across ComfyUI versions instead of demanding the newest one.
+    """
+    cache_key = getattr(target, "__qualname__", repr(target))
+    accepted = _OPTIONAL_KWARGS_CACHE.get(cache_key)
+    if accepted is None:
+        try:
+            parameters = inspect.signature(target).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+            accepted = frozenset(supported)
+        else:
+            accepted = frozenset(name for name in supported if name in parameters)
+        _OPTIONAL_KWARGS_CACHE[cache_key] = accepted
+        _LOGGER.info("[CineStyle] %s accepts optional arguments: %s", cache_key,
+                     ", ".join(sorted(accepted)) or "none")
+    return {name: value for name, value in kwargs.items() if name in accepted}
+
+
 def _video_from_tensor_inputs(
     image: torch.Tensor | None,
     mask: torch.Tensor | None,
@@ -476,15 +506,18 @@ def _video_from_tensor_inputs(
         images = masks.float().clamp(0.0, 1.0).unsqueeze(-1).expand(-1, -1, -1, 3).contiguous()
     else:
         raise ValueError("Connect video, image, or mask to CS Save Video")
-    return InputImpl.VideoFromComponents(
-        Types.VideoComponents(
-            images=images,
-            audio=audio,
-            frame_rate=Fraction(max(1.0, float(fps))).limit_denominator(1000),
-        ),
+    components = Types.VideoComponents(
+        images=images,
+        audio=audio,
+        frame_rate=Fraction(max(1.0, float(fps))).limit_denominator(1000),
+    )
+    optional_kwargs = _optional_kwargs(
+        InputImpl.VideoFromComponents,
+        ("bit_depth", "color_space", "pixel_format"),
         bit_depth=8,
         color_space="sRGB",
     )
+    return InputImpl.VideoFromComponents(components, **optional_kwargs)
 
 
 class CSSaveVideo(io.ComfyNode):

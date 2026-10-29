@@ -448,6 +448,18 @@ def _video_info_lines(info: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _video_attr(video: Any, method: str, default: Any) -> Any:
+    """Read a VIDEO accessor that older ComfyUI builds may not provide."""
+    getter = getattr(video, method, None)
+    if not callable(getter):
+        return default
+    try:
+        value = getter()
+    except Exception:
+        return default
+    return default if value is None else value
+
+
 def _encode_components_video(video: InputImpl.VideoFromComponents, path: Path) -> dict[str, Any]:
     components = video.get_components()
     images = components.images
@@ -506,8 +518,8 @@ def _encode_components_video(video: InputImpl.VideoFromComponents, path: Path) -
         "preview_duration": preview_duration,
         "container": None,
         "video_codec": None,
-        "colour_space": video.get_color_space(),
-        "bit_depth": video.get_bit_depth(),
+        "colour_space": _video_attr(video, "get_color_space", "auto"),
+        "bit_depth": _video_attr(video, "get_bit_depth", 8),
         "has_audio": prepared_audio is not None,
         "audio_codec": None,
         "audio_sample_format": str(prepared_audio[0].dtype).replace("torch.", "") if prepared_audio else None,
@@ -543,8 +555,8 @@ def _encode_stream_video(video: Input.Video, path: Path) -> dict[str, Any]:
         container_name = input_container.format.name if input_container.format else None
         video_codec = input_stream.codec.name if input_stream.codec is not None else None
         if isinstance(source, (str, os.PathLike)):
-            input_bit_depth = video.get_bit_depth()
-            colour_space = video.get_color_space()
+            input_bit_depth = _video_attr(video, "get_bit_depth", 8)
+            colour_space = _video_attr(video, "get_color_space", "auto")
         else:
             input_bit_depth = max(
                 (int(component.bits) for component in (input_stream.format.components if input_stream.format else [])),
